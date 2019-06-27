@@ -1,0 +1,19 @@
+{
+    "name": "swoft/csp",
+    "description": "CSP concurrency model based on swoft",
+    "authors": [
+        {
+            "name": "leaf321",
+            "email": "994301536@qq.com"
+        }
+    ],
+    "minimum-stability": "dev",
+    "require": {
+     	"php": ">=7.1.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Swoft\\Csp\\": "src/"
+        }
+    }
+}
