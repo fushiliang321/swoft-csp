@@ -2,6 +2,7 @@
 
 namespace Swoft\Csp;
 
+use Swoft\Csp\Exception\CspException;
 use Swoole\Coroutine;
 
 /**
@@ -11,11 +12,8 @@ use Swoole\Coroutine;
  */
 class AbstractCsp
 {
-    protected $cspKey = '';
-    private $cspMap = [];
-
-    public const CSP_MODE_SYN = 'syn';
-    public const CSP_MODE_ASY = 'asy';
+    private $cspKey    = '';
+    private $cspObjMap = [];
 
     /**
      * @param $name
@@ -28,34 +26,69 @@ class AbstractCsp
         if (substr($name, -3) !== "Csp") {
             return false;
         }
-        $key = 'default_chann';
-        $data = [
-            'mode'      => 'syn',
-            'arguments' => $arguments,
-        ];
-        if (isset($arguments[0]['cspKey']) || isset($arguments[0]['cspBack']) || isset($arguments[0]['cspMode'])) {
-            $key = $arguments[0]['cspKey'] ?? $key;
-            $data['mode'] = $arguments[0]['cspMode'] ?? $data['mode'];
-            unset($data['arguments'][0]);
-        }
-        $cspObj = $this->csp((string)$key);
+        $class      = new \ReflectionClass($this);
         $methodName = substr($name, 0, -3);
-        return call_user_func([$cspObj, $methodName], $data);
+        $parameters = $class->getMethod($methodName)->getParameters();
+        $config     = $this->argToConfig($arguments);
+        if (count($arguments) > count($parameters)) {
+            throw new CspException('参数错误');
+        }
+        return $this->methodCall($methodName, $config);
     }
 
     /**
+     * 方法调用
+     * @param $method 方法名
+     * @param $config 配置数据
+     * @param int $retry 调用失败后重试次数
+     *
+     * @return mixed
+     */
+    private function methodCall($methodName, $config, $retry = 3)
+    {
+        $cspObj = $this->getCspObj($config->getKey());
+        $res    = call_user_func([$cspObj, $methodName], $config);
+        if ($res === false && $retry > 0) {
+            return $this->methodCall($methodName, $config, --$retry);
+        }
+        return $res;
+    }
+
+    /**
+     * 根据参数生成配置
+     * @param array $arguments
+     *
+     * @return mixed|Config|null
+     */
+    private function argToConfig(array &$arguments)
+    {
+        $config = new Config();
+        if (is_array($arguments[0]) && $config->isConfigData($arguments[0])) {
+            $config->setAll($arguments[0]);
+            array_splice($arguments, 0, 1);
+        }
+        $config->setArguments($arguments);
+        return $config;
+    }
+
+    /**
+     * 获取一个csp对象
      * @param string $channKey
      *
      * @return $this
      */
-    public function csp(string $key = "default_chann")
+    private function getCspObj(string $key = "default")
     {
         $key = $this->keyEncode($key);
-        if (!isset($this->cspMap[$key])) {
-            $this->cspMap[$key] = new CspBasic($this);
-            $this->cspObjGC($key);
+        if (!isset($this->cspObjMap[$key])) {
+            $this->cspObjGC($key, 5);
+            $this->cspObjMap[$key] = new Basic($this);
         }
-        return $this->cspMap[$key];
+        if ($this->cspObjMap[$key]->isClose()) {
+            $this->clearCspObj($key);
+            return $this->getCspObj($key);
+        }
+        return $this->cspObjMap[$key];
     }
 
     /**
@@ -77,19 +110,29 @@ class AbstractCsp
      */
     private function cspObjGC(string $key, int $timeout = 60): bool
     {
-        sgo(function () use ($key, $timeout) {
+        $fun = function_exists('sgo') ? 'sgo' : 'go';
+        $fun(function () use ($key, $timeout) {
             while (1) {
                 Coroutine::sleep($timeout);
-                if (!$this->cspMap[$key]->counter) {
-                    $this->cspMap[$key]->close();
-                    $this->cspMap[$key] = null;
-                }
-                if (!$this->cspMap[$key]) {
-                    unset($this->cspMap[$key]);
+                if (!isset($this->cspObjMap[$key]) || !$this->cspObjMap[$key] || $this->cspObjMap[$key]->getAwaitCounter() <= 0) {
+                    $this->clearCspObj($key);
                     break;
                 }
             }
         });
+        return true;
+    }
+
+    /**
+     * 清除csp对象
+     *
+     * @return bool
+     */
+    private function clearCspObj($key)
+    {
+        @$this->cspObjMap[$key]->close();
+        $this->cspObjMap[$key] = null;
+        unset($this->cspObjMap[$key]);
         return true;
     }
 }

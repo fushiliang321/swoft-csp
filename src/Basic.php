@@ -12,9 +12,9 @@ class Basic
 
     public function __construct($class)
     {
-        $this->chan = new Channel();
-        $this->creationConsumer($class);
+        $this->chan   = new Channel();
         $this->status = 1;
+        $this->creationConsumer($class);
     }
 
     public function __call(string $name, array $data)
@@ -67,16 +67,20 @@ class Basic
                     $this->close();
                     break;
                 }
+                $res = false;
                 if (is_callable([$class, $data['method']])) {
-                    $res = call_user_func_array([$class, $data['method']], $data['arguments']);
-                } else {
-                    $res = false;
+                    @$res = call_user_func_array([$class, $data['method']], $data['arguments']);
                 }
                 if ($data['chan']) {
                     $data['chan']->push(['result' => $res]);
                 }
             }
         });
+    }
+
+    public function getAwaitCounter(): int
+    {
+        return $this->awaitCounter;
     }
 
     /**
@@ -86,6 +90,7 @@ class Basic
      */
     public function close(): bool
     {
+        print_r('close');
         $this->awaitCounter = 0;
         $this->status       = 0;
         @$this->chan->close();
